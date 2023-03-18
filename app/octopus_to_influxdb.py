@@ -181,8 +181,8 @@ def cmd(config_file, from_date, to_date):
     g_cv = config.get('gas', 'calorific_value', fallback=40)
     if not g_mprn or not g_serial:
         raise click.ClickException('No gas meter identifiers')
-    g_product_code = config.get('gas', 'product_code', fallback="")
-    g_tariff_code = config.get('gas', 'tariff_code', fallback="")
+    g_product_code = config.get('gas', 'product_code', fallback="VAR-22-10-01")
+    g_tariff_code = config.get('gas', 'tariff_code', fallback="G-1R-VAR-22-10-01-C")
     g_url = 'https://api.octopus.energy/v1/gas-meter-points/' \
             f'{g_mprn}/meters/{g_serial}/consumption/'
     g_sc_url = f'https://api.octopus.energy/v1/products/{g_product_code}/gas-tariffs/{g_tariff_code}/standing-charges/'

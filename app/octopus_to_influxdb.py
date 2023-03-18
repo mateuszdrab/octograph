@@ -42,12 +42,12 @@ def store_series(connection, series, account_name, metrics, rate_data):
     def active_rate_field(measurement):
         if series == 'gas':
             return 'unit_rate'
-        elif not rate_data['unit_rate_low_zone']:  # no low rate
+        elif not rate_data['unit_rate_zone']:  # no low rate
             return 'unit_rate_high'
 
         low_start_str = rate_data['unit_rate_low_start']
         low_end_str = rate_data['unit_rate_low_end']
-        low_zone = rate_data['unit_rate_low_zone']
+        low_zone = rate_data['unit_rate_zone']
 
         measurement_at = maya.parse(measurement['interval_start'])
 
@@ -82,6 +82,7 @@ def store_series(connection, series, account_name, metrics, rate_data):
             'consumption': consumption,
             'cost': cost,
             'total_cost': cost + standing_charge,
+            'rate': rate_cost
         }
         if agile_data:
             agile_standing_charge = rate_data['agile_standing_charge'] / 48
@@ -118,6 +119,18 @@ def store_series(connection, series, account_name, metrics, rate_data):
     connection.write_points(measurements)
 
 
+def get_latest_value_inc_vat(from_iso, to_iso, e_sc_url, api_key):
+    args = {
+        'period_from': from_iso,
+        'period_to': to_iso,
+    }
+    response = requests.get(e_sc_url, params=args, auth=(api_key, ''))
+    response.raise_for_status()
+    data = response.json()
+    retrieved_standing_charge = data.get('results', [])[0]["value_inc_vat"]
+    return retrieved_standing_charge
+
+
 @click.command()
 @click.option(
     '--config-file',
@@ -144,30 +157,43 @@ def cmd(config_file, from_date, to_date):
     if not api_key:
         raise click.ClickException('No Octopus API key set')
 
+    timezone = config.get('electricity', 'unit_rate_time_zone', fallback="Europe/London")
+    from_iso = maya.when(from_date, timezone=timezone).iso8601()
+    to_iso = maya.when(to_date, timezone=timezone).iso8601()
+
     e_mpan = config.get('electricity', 'mpan', fallback=None)
     e_serial = config.get('electricity', 'serial_number', fallback=None)
     if not e_mpan or not e_serial:
         raise click.ClickException('No electricity meter identifiers')
     e_url = 'https://api.octopus.energy/v1/electricity-meter-points/' \
             f'{e_mpan}/meters/{e_serial}/consumption/'
-    agile_url = config.get('electricity', 'agile_rate_url', fallback=None)
+    e_product_code = config.get('electricity', 'product_code', fallback="AGILE-FLEX-22-11-25")
+    e_tariff_code = config.get('electricity', 'tariff_code', fallback="E-1R-AGILE-FLEX-22-11-25-C")
+    agile_url = f'https://api.octopus.energy/v1/products/{e_product_code}/electricity-tariffs/{e_tariff_code}/standard-unit-rates/'
 
-    g_mpan = config.get('gas', 'mpan', fallback=None)
+    e_sc_url = f'https://api.octopus.energy/v1/products/{e_product_code}/electricity-tariffs/{e_tariff_code}/standing-charges/'
+    e_retrieved_standing_charge = get_latest_value_inc_vat(from_iso, to_iso, e_sc_url, api_key)
+
+    g_mprn = config.get('gas', 'mprn', fallback=None)
     g_serial = config.get('gas', 'serial_number', fallback=None)
     g_meter_type = config.get('gas', 'meter_type', fallback=1)
     g_vcf = config.get('gas', 'volume_correction_factor', fallback=1.02264)
     g_cv = config.get('gas', 'calorific_value', fallback=40)
-    if not g_mpan or not g_serial:
+    if not g_mprn or not g_serial:
         raise click.ClickException('No gas meter identifiers')
+    g_product_code = config.get('gas', 'product_code', fallback="")
+    g_tariff_code = config.get('gas', 'tariff_code', fallback="")
     g_url = 'https://api.octopus.energy/v1/gas-meter-points/' \
-            f'{g_mpan}/meters/{g_serial}/consumption/'
-
-    timezone = config.get('electricity', 'unit_rate_low_zone', fallback=None)
+            f'{g_mprn}/meters/{g_serial}/consumption/'
+    g_sc_url = f'https://api.octopus.energy/v1/products/{g_product_code}/gas-tariffs/{g_tariff_code}/standing-charges/'
+    g_retrieved_standing_charge = get_latest_value_inc_vat(from_iso, to_iso, g_sc_url, api_key)
+    g_unit_url = f'https://api.octopus.energy/v1/products/{g_product_code}/gas-tariffs/{g_tariff_code}/standard-unit-rates/'
+    g_unit_cost = get_latest_value_inc_vat(from_iso, to_iso, g_unit_url, api_key)
 
     rate_data = {
         'electricity': {
             'standing_charge': config.getfloat(
-                'electricity', 'standing_charge', fallback=0.0
+                'electricity', 'standing_charge', fallback=e_retrieved_standing_charge
             ),
             'unit_rate_high': config.getfloat(
                 'electricity', 'unit_rate_high', fallback=0.0
@@ -181,24 +207,21 @@ def cmd(config_file, from_date, to_date):
             'unit_rate_low_end': config.get(
                 'electricity', 'unit_rate_low_end', fallback="00:00"
             ),
-            'unit_rate_low_zone': timezone,
+            'unit_rate_zone': timezone,
             'agile_standing_charge': config.getfloat(
-                'electricity', 'agile_standing_charge', fallback=0.0
+                'electricity', 'agile_standing_charge', fallback=e_retrieved_standing_charge
             ),
             'agile_unit_rates': [],
         },
         'gas': {
             'standing_charge': config.getfloat(
-                'gas', 'standing_charge', fallback=0.0
+                'gas', 'standing_charge', fallback=g_retrieved_standing_charge
             ),
-            'unit_rate': config.getfloat('gas', 'unit_rate', fallback=0.0),
+            'unit_rate': config.getfloat('gas', 'unit_rate', fallback=g_unit_cost),
             # SMETS1 meters report kWh, SMET2 report m^3 and need converting to kWh first
             'conversion_factor': (float(g_vcf) * float(g_cv)) / 3.6 if int(g_meter_type) > 1 else None,
         }
     }
-
-    from_iso = maya.when(from_date, timezone=timezone).iso8601()
-    to_iso = maya.when(to_date, timezone=timezone).iso8601()
 
     click.echo(
         f'Retrieving electricity data for {from_iso} until {to_iso}...',

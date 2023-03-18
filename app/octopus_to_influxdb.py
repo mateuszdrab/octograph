@@ -31,7 +31,7 @@ def retrieve_paginated_data(
     return results
 
 
-def store_series(connection, series, metrics, rate_data):
+def store_series(connection, series, account_name, metrics, rate_data):
 
     agile_data = rate_data.get('agile_unit_rates', [])
     agile_rates = {
@@ -103,6 +103,7 @@ def store_series(connection, series, metrics, rate_data):
         return {
             'active_rate': active_rate_field(measurement),
             'time_of_day': time,
+            'account_name' : account_name
         }
 
     measurements = [
@@ -139,6 +140,7 @@ def cmd(config_file, from_date, to_date):
     )
 
     api_key = config.get('octopus', 'api_key')
+    account_name = config.get('octopus', 'account_name', fallback=None)
     if not api_key:
         raise click.ClickException('No Octopus API key set')
 
@@ -214,7 +216,7 @@ def cmd(config_file, from_date, to_date):
         api_key, agile_url, from_iso, to_iso
     )
     click.echo(f' {len(rate_data["electricity"]["agile_unit_rates"])} rates.')
-    store_series(influx, 'electricity', e_consumption, rate_data['electricity'])
+    store_series(influx, 'electricity', account_name, e_consumption, rate_data['electricity'])
 
     click.echo(
         f'Retrieving gas data for {from_iso} until {to_iso}...',
@@ -224,7 +226,7 @@ def cmd(config_file, from_date, to_date):
         api_key, g_url, from_iso, to_iso
     )
     click.echo(f' {len(g_consumption)} readings.')
-    store_series(influx, 'gas', g_consumption, rate_data['gas'])
+    store_series(influx, 'gas', account_name, g_consumption, rate_data['gas'])
 
 
 if __name__ == '__main__':

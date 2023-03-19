@@ -35,7 +35,7 @@ def store_series(connection, series, account_name, metrics, rate_data):
 
     agile_data = rate_data.get('agile_unit_rates', [])
     agile_rates = {
-        point['valid_to']: point['value_inc_vat']
+        point['valid_from']: point['value_inc_vat']
         for point in agile_data
     }
 
@@ -87,7 +87,7 @@ def store_series(connection, series, account_name, metrics, rate_data):
         if agile_data:
             agile_standing_charge = rate_data['agile_standing_charge'] / 48
             agile_unit_rate = agile_rates.get(
-                maya.parse(measurement['interval_end']).iso8601(),
+                maya.parse(measurement['interval_start']).iso8601(),
                 rate_data[rate]  # cludge, use Go rate during DST changeover
             )
             agile_cost = agile_unit_rate * consumption
@@ -99,7 +99,7 @@ def store_series(connection, series, account_name, metrics, rate_data):
         return fields
 
     def tags_for_measurement(measurement):
-        period = maya.parse(measurement['interval_end'])
+        period = maya.parse(measurement['interval_start'])
         time = period.datetime().strftime('%H:%M')
         return {
             'active_rate': active_rate_field(measurement),
@@ -111,7 +111,7 @@ def store_series(connection, series, account_name, metrics, rate_data):
         {
             'measurement': series,
             'tags': tags_for_measurement(measurement),
-            'time': measurement['interval_end'],
+            'time': measurement['interval_start'],
             'fields': fields_for_measurement(measurement),
         }
         for measurement in metrics

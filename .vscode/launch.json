@@ -14,6 +14,17 @@
             "args": [
                 "--from-date=7 days ago"
             ]
+        },
+        {
+            "name": "Python: from date - 14 days ago",
+            "type": "python",
+            "request": "launch",
+            "program": "app/octopus_to_influxdb.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "--from-date=14 days ago",
+            ]
         }
     ]
 }

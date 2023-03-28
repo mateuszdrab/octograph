@@ -174,21 +174,23 @@ def cmd(config_file, from_date, to_date):
     e_sc_url = f'https://api.octopus.energy/v1/products/{e_product_code}/electricity-tariffs/{e_tariff_code}/standing-charges/'
     e_retrieved_standing_charge = get_latest_value_inc_vat(from_iso, to_iso, e_sc_url, api_key)
 
+    g_ignore = config.getboolean('gas', 'ignore', fallback=False)
     g_mprn = config.get('gas', 'mprn', fallback=None)
     g_serial = config.get('gas', 'serial_number', fallback=None)
     g_meter_type = config.get('gas', 'meter_type', fallback=1)
     g_vcf = config.get('gas', 'volume_correction_factor', fallback=1.02264)
     g_cv = config.get('gas', 'calorific_value', fallback=40)
-    if not g_mprn or not g_serial:
+    if (not g_mprn or not g_serial) and not g_ignore:
         raise click.ClickException('No gas meter identifiers')
-    g_product_code = config.get('gas', 'product_code', fallback="VAR-22-10-01")
-    g_tariff_code = config.get('gas', 'tariff_code', fallback="G-1R-VAR-22-10-01-C")
-    g_url = 'https://api.octopus.energy/v1/gas-meter-points/' \
-            f'{g_mprn}/meters/{g_serial}/consumption/'
-    g_sc_url = f'https://api.octopus.energy/v1/products/{g_product_code}/gas-tariffs/{g_tariff_code}/standing-charges/'
-    g_retrieved_standing_charge = get_latest_value_inc_vat(from_iso, to_iso, g_sc_url, api_key)
-    g_unit_url = f'https://api.octopus.energy/v1/products/{g_product_code}/gas-tariffs/{g_tariff_code}/standard-unit-rates/'
-    g_unit_cost = get_latest_value_inc_vat(from_iso, to_iso, g_unit_url, api_key)
+    elif not g_ignore:
+        g_product_code = config.get('gas', 'product_code', fallback="VAR-22-10-01")
+        g_tariff_code = config.get('gas', 'tariff_code', fallback="G-1R-VAR-22-10-01-C")
+        g_url = 'https://api.octopus.energy/v1/gas-meter-points/' \
+                f'{g_mprn}/meters/{g_serial}/consumption/'
+        g_sc_url = f'https://api.octopus.energy/v1/products/{g_product_code}/gas-tariffs/{g_tariff_code}/standing-charges/'
+        g_retrieved_standing_charge = get_latest_value_inc_vat(from_iso, to_iso, g_sc_url, api_key)
+        g_unit_url = f'https://api.octopus.energy/v1/products/{g_product_code}/gas-tariffs/{g_tariff_code}/standard-unit-rates/'
+        g_unit_cost = get_latest_value_inc_vat(from_iso, to_iso, g_unit_url, api_key)
 
     rate_data = {
         'electricity': {
@@ -212,16 +214,18 @@ def cmd(config_file, from_date, to_date):
                 'electricity', 'agile_standing_charge', fallback=e_retrieved_standing_charge
             ),
             'agile_unit_rates': [],
-        },
-        'gas': {
+        }
+    }
+    
+    if not g_ignore:
+        rate_data.update({'gas': {
             'standing_charge': config.getfloat(
                 'gas', 'standing_charge', fallback=g_retrieved_standing_charge
             ),
             'unit_rate': config.getfloat('gas', 'unit_rate', fallback=g_unit_cost),
             # SMETS1 meters report kWh, SMET2 report m^3 and need converting to kWh first
             'conversion_factor': (float(g_vcf) * float(g_cv)) / 3.6 if int(g_meter_type) > 1 else None,
-        }
-    }
+        }})
 
     click.echo(
         f'Retrieving electricity data for {from_iso} until {to_iso}...',
@@ -241,15 +245,16 @@ def cmd(config_file, from_date, to_date):
     click.echo(f' {len(rate_data["electricity"]["agile_unit_rates"])} rates.')
     store_series(influx, 'electricity', account_name, e_consumption, rate_data['electricity'])
 
-    click.echo(
-        f'Retrieving gas data for {from_iso} until {to_iso}...',
-        nl=False
-    )
-    g_consumption = retrieve_paginated_data(
-        api_key, g_url, from_iso, to_iso
-    )
-    click.echo(f' {len(g_consumption)} readings.')
-    store_series(influx, 'gas', account_name, g_consumption, rate_data['gas'])
+    if not g_ignore:
+        click.echo(
+            f'Retrieving gas data for {from_iso} until {to_iso}...',
+            nl=False
+        )
+        g_consumption = retrieve_paginated_data(
+            api_key, g_url, from_iso, to_iso
+        )
+        click.echo(f' {len(g_consumption)} readings.')
+        store_series(influx, 'gas', account_name, g_consumption, rate_data['gas'])
 
 
 if __name__ == '__main__':
